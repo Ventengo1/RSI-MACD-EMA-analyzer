@@ -1,151 +1,124 @@
 import yfinance as yf
 import pandas as pd
 from datetime import datetime
-import numpy as np # Still needed for some pandas operations, though less critical
+import numpy as np
 
 
-# Strategy Parameters (Very Basic)
-SHORT_EMA_WINDOW = 10
-LONG_EMA_WINDOW = 20
-RSI_WINDOW = 14 # Standard RSI window
-RSI_OVERBOUGHT = 70
-RSI_OVERSOLD = 30
-MACD_FAST = 12
-MACD_SLOW = 26
-MACD_SIGNAL = 9
+short_ema_len = 10
+long_ema_len = 20
+rsi_period = 14
+rsi_high_bound = 70
+rsi_low_bound = 30
+macd_fast_len = 12
+macd_slow_len = 26
+macd_sig_len = 9
 
 
-def get_historical_data(symbol, days=90):
-    """Fetch historical data."""
-    end_date = datetime.now().strftime("%Y-%m-%d")
-    start_date = (datetime.now() - pd.Timedelta(days=days)).strftime("%Y-%m-%d")
-    data = yf.download(symbol, start=start_date, end=end_date)
-    if data.empty:
-        print(f"No data for {symbol}. Check the symbol or internet connection.", flush=True)
+def grab_stock_hist(tick, num_days=90):
+    end_dt = datetime.now().strftime("%Y-%m-%d")
+    start_dt = (datetime.now() - pd.Timedelta(days=num_days)).strftime("%Y-%m-%d")
+    data_raw = yf.download(tick, start=start_dt, end=end_dt)
+    if data_raw.empty:
+        print(f"No data for {tick}.")
         return None
-    return data
+    return data_raw
 
+def calc_all_stuff(data_in):
+    data_in["S_EMA"] = data_in["Close"].ewm(span=short_ema_len, adjust=False).mean()
+    data_in["L_EMA"] = data_in["Close"].ewm(span=long_ema_len, adjust=False).mean()
 
-def calculate_indicators(data):
-    """Calculate EMA, RSI, and MACD (simplified)."""
-    # EMA
-    data["Short_EMA"] = data["Close"].ewm(span=SHORT_EMA_WINDOW, adjust=False).mean()
-    data["Long_EMA"] = data["Close"].ewm(span=LONG_EMA_WINDOW, adjust=False).mean()
+    chg = data_in["Close"].diff()
+    up = chg.where(chg > 0, 0)
+    down = -chg.where(chg < 0, 0)
 
-    # RSI
-    delta = data["Close"].diff()
-    gain = delta.where(delta > 0, 0)
-    loss = -delta.where(delta < 0, 0)
-    # Using .fillna(0) to handle potential division by zero for initial periods
-    avg_gain = gain.ewm(alpha=1 / RSI_WINDOW, adjust=False).mean().fillna(0)
-    avg_loss = loss.ewm(alpha=1 / RSI_WINDOW, adjust=False).mean().fillna(0)
-    rs = avg_gain / avg_loss
-    data["RSI"] = 100 - (100 / (1 + rs)).fillna(0) # Fillna 0 to avoid NaN from division by zero
+    avg_up = up.ewm(alpha=1 / rsi_period, adjust=False).mean().fillna(0)
+    avg_down = down.ewm(alpha=1 / rsi_period, adjust=False).mean().fillna(0)
+    rs_val = avg_up / avg_down
+    data_in["RSI_val"] = 100 - (100 / (1 + rs_val)).fillna(0)
 
-    # MACD
-    data["MACD_Fast"] = data["Close"].ewm(span=MACD_FAST, adjust=False).mean()
-    data["MACD_Slow"] = data["Close"].ewm(span=MACD_SLOW, adjust=False).mean()
-    data["MACD_Line"] = data["MACD_Fast"] - data["MACD_Slow"]
-    data["MACD_Signal"] = data["MACD_Line"].ewm(span=MACD_SIGNAL, adjust=False).mean()
+    data_in["MACD_F"] = data_in["Close"].ewm(span=macd_fast_len, adjust=False).mean()
+    data_in["MACD_S"] = data_in["Close"].ewm(span=macd_slow_len, adjust=False).mean()
+    data_in["MACD_Line_val"] = data_in["MACD_F"] - data_in["MACD_S"]
+    data_in["MACD_Signal_val"] = data_in["MACD_Line_val"].ewm(span=macd_sig_len, adjust=False).mean()
 
-    # Drop intermediate columns if desired to save memory
-    data = data.drop(columns=["MACD_Fast", "MACD_Slow"], errors='ignore')
+    return data_in
 
-    return data
-
-
-def get_current_price(symbol):
-    """Fetch the current price."""
-    ticker = yf.Ticker(symbol)
-    history = ticker.history(period="1d")
-    if history.empty:
-        print(f"No current price for {symbol}.", flush=True)
+def get_live_price(ticker_sym):
+    t = yf.Ticker(ticker_sym)
+    hist_1d = t.history(period="1d")
+    if hist_1d.empty:
+        print(f"No current price for {ticker_sym}.")
         return None
-    return history["Close"].iloc[-1]
+    return hist_1d["Close"].iloc[-1]
 
+def make_the_call(data_processed):
+    if data_processed.empty:
+        return "Not enough data."
 
-def make_decision(data):
-    """Make a very basic trading decision based on EMA crossover and RSI/MACD."""
-    # Ensure there's enough data for the latest calculations
-    if data.empty or len(data) < max(SHORT_EMA_WINDOW, LONG_EMA_WINDOW, RSI_WINDOW, MACD_SLOW, MACD_SIGNAL):
-        return "Not enough data to make a decision."
+    s_ema_curr = data_processed["S_EMA"].iloc[-1]
+    l_ema_curr = data_processed["L_EMA"].iloc[-1]
+    rsi_curr = data_processed["RSI_val"].iloc[-1]
+    macd_line_curr = data_processed["MACD_Line_val"].iloc[-1]
+    macd_sig_curr = data_processed["MACD_Signal_val"].iloc[-1]
 
-    latest_short_ema = data["Short_EMA"].iloc[-1]
-    latest_long_ema = data["Long_EMA"].iloc[-1]
-    latest_rsi = data["RSI"].iloc[-1]
-    latest_macd_line = data["MACD_Line"].iloc[-1]
-    latest_macd_signal = data["MACD_Signal"].iloc[-1]
-
-    # Buy condition: Short EMA above Long EMA AND RSI not overbought AND MACD Line above Signal
-    if (latest_short_ema > latest_long_ema and
-        latest_rsi < RSI_OVERBOUGHT and
-        latest_macd_line > latest_macd_signal):
-        return "Buy"
-    # Sell condition: Short EMA below Long EMA AND RSI not oversold AND MACD Line below Signal
-    elif (latest_short_ema < latest_long_ema and
-          latest_rsi > RSI_OVERSOLD and
-          latest_macd_line < latest_macd_signal):
-        return "Sell"
+    if (s_ema_curr > l_ema_curr and
+        rsi_curr < rsi_high_bound and
+        macd_line_curr > macd_sig_curr):
+        return "BUY"
+    elif (s_ema_curr < l_ema_curr and
+          rsi_curr > rsi_low_bound and
+          macd_line_curr < macd_sig_curr):
+        return "SELL"
     else:
-        return "Hold"
+        return "HOLD"
 
 
 if __name__ == "__main__":
-    try:
-        print("Starting the basic trading decision bot...", flush=True)
+    print("Starting stock analysis program.")
 
-        symbols_input = input("Enter stock symbols separated by commas (e.g., AAPL,MSFT): ").strip().upper()
-        symbols = [s.strip() for s in symbols_input.split(",") if s.strip()]
+    user_syms = input("Enter stock symbols (e.g., MSFT, GOOG): ").strip().upper()
+    sym_list = [s.strip() for s in user_syms.split(",") if s.strip()]
 
-        if not symbols:
-            print("No symbols entered. Exiting.", flush=True)
-            exit()
+    if not sym_list:
+        print("No symbols, quitting.")
+        exit()
 
-        for symbol in symbols:
-            print(f"\nAnalyzing {symbol}...", flush=True)
+    for sym in sym_list:
+        print(f"\n--- Analyzing {sym} ---")
 
-            data = get_historical_data(symbol)
-            if data is None or data.empty:
-                print(f"Could not retrieve historical data for {symbol}. Skipping.", flush=True)
+        df = grab_stock_hist(sym)
+        if df is None:
+            continue
+
+        df = calc_all_stuff(df)
+
+        if df.isnull().values.any():
+            df = df.dropna()
+            if df.empty:
+                print(f"Skipping {sym} due to too many NaNs.")
                 continue
 
-            data = calculate_indicators(data)
+        curr_p = get_live_price(sym)
+        if curr_p is None:
+            continue
 
-            # Check for NaN values after indicator calculation, especially at the start
-            if data.isnull().values.any():
-                # Filter out rows with NaN in the columns we care about for decision making
-                data_for_decision = data.dropna(subset=["Short_EMA", "Long_EMA", "RSI", "MACD_Line", "MACD_Signal"])
-                if data_for_decision.empty:
-                    print(f"Insufficient valid data after indicator calculation for {symbol}. Skipping.", flush=True)
-                    continue
-                # If only some rows are NaN, use the latest valid ones
-                data = data_for_decision
+        trade_decision = make_the_call(df)
 
 
-            current_price = get_current_price(symbol)
-            if current_price is None:
-                continue
+        print(f"\nSymbol: {sym}")
+        print(f"Current Price: {curr_p:.2f}")
 
-            decision = make_decision(data) # Simplified decision function
+        if not df.empty:
+            print("Indicators:")
+            print(f"  Short EMA: {df['S_EMA'].iloc[-1]:.2f}")
+            print(f"  Long EMA: {df['L_EMA'].iloc[-1]:.2f}")
+            print(f"  RSI: {df['RSI_val'].iloc[-1]:.2f}")
+            print(f"  MACD Line: {df['MACD_Line_val'].iloc[-1]:.2f}")
+            print(f"  MACD Signal: {df['MACD_Signal_val'].iloc[-1]:.2f}")
+        else:
+            print("Indicator data missing for analysis.")
 
-            print("\n--- Analysis Summary ---")
-            print(f"Symbol: {symbol}")
-            print(f"Current Price: {current_price:.2f}")
+        print(f"\nDecision for {sym}: {trade_decision}\n")
+        print("-" * 25)
 
-            # Print latest indicator values if available
-            if not data.empty and not data["Short_EMA"].iloc[-1] is np.nan:
-                print(f"Short EMA ({SHORT_EMA_WINDOW} days): {data['Short_EMA'].iloc[-1]:.2f}")
-                print(f"Long EMA ({LONG_EMA_WINDOW} days): {data['Long_EMA'].iloc[-1]:.2f}")
-                print(f"RSI ({RSI_WINDOW} days): {data['RSI'].iloc[-1]:.2f}")
-                print(f"MACD Line: {data['MACD_Line'].iloc[-1]:.2f}")
-                print(f"MACD Signal: {data['MACD_Signal'].iloc[-1]:.2f}")
-            else:
-                print("Indicator values not available due to insufficient data.")
-
-            print(f"\nTrading Decision for {symbol}: {decision}")
-            print("-" * 30)
-
-        print("\nThe basic trading decision script has completed successfully.", flush=True)
-
-    except Exception as e:
-        print(f"An error occurred: {e}", flush=True)
+    print("\nAll done.")
