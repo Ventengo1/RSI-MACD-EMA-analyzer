@@ -5,7 +5,18 @@ from datetime import datetime
 from sklearn.linear_model import LinearRegression
 from scipy.signal import argrelextrema
 
-# super basic fetcher
+#Worked on troubleshooting errors with the dataframes and the columns. Spent a lot of the time torubleshooting but now finally getting it to work.
+
+
+short_ema_len = 10
+long_ema_len = 20
+rsi_period = 14
+rsi_high_bound = 70
+rsi_low_bound = 30
+macd_fast_len = 12
+macd_slow_len = 26
+macd_sig_len = 9
+
 
 def get_data(symb, days=300):
     try:
@@ -15,27 +26,32 @@ def get_data(symb, days=300):
         if df.empty:
             return None
         return df
-    except:
+    except Exception:
         return None
 
 
 def indicators(df):
-    df['ema_s'] = df['Close'].ewm(span=13).mean()
-    df['ema_l'] = df['Close'].ewm(span=34).mean()
+    df['ema_s'] = df['Close'].ewm(span=13, adjust=False).mean()
+    df['ema_l'] = df['Close'].ewm(span=34, adjust=False).mean()
 
     delta = df['Close'].diff()
     up = delta.where(delta > 0, 0)
     down = -delta.where(delta < 0, 0)
-    rs = up.ewm(span=5).mean() / down.ewm(span=5).mean()
+    
+    avg_up = up.ewm(span=5, adjust=False).mean().fillna(0)
+    avg_down = down.ewm(span=5, adjust=False).mean().fillna(0)
+
+    rs = np.divide(avg_up, avg_down, out=np.zeros_like(avg_up), where=avg_down!=0)
+    rs = rs.fillna(0)
+
     df['rsi'] = 100 - (100 / (1 + rs))
 
-    macd_f = df['Close'].ewm(span=12).mean()
-    macd_s = df['Close'].ewm(span=26).mean()
+    macd_f = df['Close'].ewm(span=12, adjust=False).mean()
+    macd_s = df['Close'].ewm(span=26, adjust=False).mean()
     df['macd'] = macd_f - macd_s
-    df['macd_sig'] = df['macd'].ewm(span=9).mean()
+    df['macd_sig'] = df['macd'].ewm(span=9, adjust=False).mean()
     df['macd_hist'] = df['macd'] - df['macd_sig']
 
-    # just use rolling std for vol approximation
     df['vol'] = df['Close'].rolling(10).std()
     df['bb_up'] = df['Close'].rolling(10).mean() + 1.5 * df['vol']
     df['bb_dn'] = df['Close'].rolling(10).mean() - 1.5 * df['vol']
@@ -45,18 +61,24 @@ def indicators(df):
 
 def trend(df):
     out = []
+    if len(df) < 15:
+        return out
+        
     for i in range(15, len(df)):
         y = df['Close'].iloc[i-15:i].values
         x = np.arange(15).reshape(-1, 1)
         try:
             m = LinearRegression().fit(x, y)
             out.append((df.index[i], m.coef_[0]))
-        except:
+        except (ValueError, Exception):
             out.append((df.index[i], 0))
     return out
 
 
 def extremes(df):
+    if len(df) < 11:
+        return pd.DataFrame(), pd.DataFrame()
+
     hi = argrelextrema(df['Close'].values, np.greater, order=5)[0]
     lo = argrelextrema(df['Close'].values, np.less, order=5)[0]
     return df.iloc[hi], df.iloc[lo]
@@ -80,7 +102,7 @@ if __name__ == '__main__':
             continue
 
         df = indicators(df)
-        df = df.dropna()
+        df = df.dropna() 
         if df.empty:
             print("Empty after indicators")
             continue
@@ -92,17 +114,27 @@ if __name__ == '__main__':
             print("No current price")
             continue
 
+        if df.empty:
+            print(f"Not enough data for {s} after indicator calculation to get last row.")
+            continue
+
         last = df.iloc[-1]
         slope = trends[-1][1] if trends else 0
 
         near_top = False
         near_bot = False
-        for t in pks.index[-3:]:
-            if (df.index[-1] - t).days <= 5:
-                near_top = True
-        for b in trs.index[-3:]:
-            if (df.index[-1] - b).days <= 5:
-                near_bot = True
+        
+        if not pks.empty:
+            for t_idx in pks.index[-3:]:
+                if (df.index[-1].to_pydatetime() - t_idx.to_pydatetime()).days <= 5:
+                    near_top = True
+                    break
+
+        if not trs.empty:
+            for b_idx in trs.index[-3:]:
+                if (df.index[-1].to_pydatetime() - b_idx.to_pydatetime()).days <= 5:
+                    near_bot = True
+                    break
 
         print(f"Price: {px:.2f}")
         print(f"Short EMA: {last['ema_s']:.2f}  Long EMA: {last['ema_l']:.2f}")
@@ -110,7 +142,6 @@ if __name__ == '__main__':
         print(f"MACD: {last['macd']:.2f}  Signal: {last['macd_sig']:.2f}")
         print(f"Trend: {slope:.4f}")
 
-        # slightly looser rules
         action = "Hold"
         if px > last['ema_s'] and last['rsi'] < 80 and last['macd'] > last['macd_sig']:
             if not near_top:
