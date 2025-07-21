@@ -1,6 +1,6 @@
 # RSI-MACD-EMA-analyzer
 
-This program analyzes the RSI, MACD, and EMA for entered stocks and gives a recommended action which is weither buy, sell, or hold.
+This program analyzes the RSI, MACD, and EMA for entered stocks and gives a recommended action which is whether buy, sell, or hold.
 
 # Installation Instructions:
 
@@ -49,9 +49,10 @@ uv lock --script stock_analyzer.py
 Usage
 Once you've completed the installation steps, you can run the script using uv:
 
-Bash
+# Run the Script
 
 uv run stock_analyzer.py
+
 The script will prompt you to enter one or more stock symbols (separated by commas). For example:
 
 Symbols: AAPL,MSFT,GOOG
