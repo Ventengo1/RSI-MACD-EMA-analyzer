@@ -26,6 +26,7 @@ Bash
 
 mkdir stock-analyzer-project
 cd stock-analyzer-project
+
 3. Create the stock_analyzer.py file
 Create a file named stock_analyzer.py in your project directory and paste the entire code provided in the Code section below into it.
 
@@ -34,7 +35,8 @@ Run the following commands to add the necessary uv script metadata to stock_anal
 
 Bash
 
-uv init --script stock_analyzer.py --python 3.9 # You can specify your preferred Python version here, e.g., 3.10, 3.11, 3.12
+uv init --script stock_analyzer.py --python 3.9 
+# You can specify your preferred Python version here, e.g., 3.10, 3.11, 3.12
 uv add --script stock_analyzer.py yfinance pandas numpy scikit-learn scipy
 These commands will automatically add a /// script block at the top of your stock_analyzer.py file, listing the dependencies.
 
