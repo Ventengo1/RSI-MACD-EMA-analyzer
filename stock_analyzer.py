@@ -1,3 +1,13 @@
+# /// script
+# dependencies = [
+#   "yfinance",
+#   "pandas",
+#   "numpy",
+#   "scikit-learn",
+#   "scipy",
+# ]
+# python = "3.9" # This version will match what you specified with 'uv init --script'
+# ///
 import yfinance as yf
 import pandas as pd
 import numpy as np
@@ -37,7 +47,7 @@ def indicators(df):
     delta = df['Close'].diff()
     up = delta.where(delta > 0, 0)
     down = -delta.where(delta < 0, 0)
-    
+
     avg_up = up.ewm(span=5, adjust=False).mean().fillna(0)
     avg_down = down.ewm(span=5, adjust=False).mean().fillna(0)
 
@@ -52,9 +62,12 @@ def indicators(df):
     df['macd_sig'] = df['macd'].ewm(span=9, adjust=False).mean()
     df['macd_hist'] = df['macd'] - df['macd_sig']
 
-    df['vol'] = df['Close'].rolling(10).std()
-    df['bb_up'] = df['Close'].rolling(10).mean() + 1.5 * df['vol']
-    df['bb_dn'] = df['Close'].rolling(10).mean() - 1.5 * df['vol']
+    # Calculate Bollinger Bands correctly
+    df['vol'] = df['Close'].rolling(window=10).std()
+    df['bb_mid'] = df['Close'].rolling(window=10).mean()
+    df['bb_up'] = df['bb_mid'] + 1.5 * df['vol']
+    df['bb_dn'] = df['bb_mid'] - 1.5 * df['vol']
+
 
     return df
 
@@ -63,7 +76,7 @@ def trend(df):
     out = []
     if len(df) < 15:
         return out
-        
+
     for i in range(15, len(df)):
         y = df['Close'].iloc[i-15:i].values
         x = np.arange(15).reshape(-1, 1)
@@ -92,7 +105,7 @@ def latest_price(t):
 
 
 if __name__ == '__main__':
-    syms = input("Symbols? ").upper().split(',')
+    syms = input("Symbols: ").upper().split(',')
     for s in syms:
         s = s.strip()
         print(f"\nChecking {s}")
@@ -102,28 +115,28 @@ if __name__ == '__main__':
             continue
 
         df = indicators(df)
-        df = df.dropna() 
+        df = df.dropna()
         if df.empty:
             print("Empty after indicators")
             continue
 
-        trends = trend(df)
+        trends_data = trend(df) # Renamed to avoid conflict with 'trends' variable in print
         pks, trs = extremes(df)
         px = latest_price(s)
         if px is None:
             print("No current price")
             continue
 
-        if df.empty:
+        if df.empty: # This check is redundant if the previous df.dropna() and empty check were thorough
             print(f"Not enough data for {s} after indicator calculation to get last row.")
             continue
 
         last = df.iloc[-1]
-        slope = trends[-1][1] if trends else 0
+        slope = trends_data[-1][1] if trends_data else 0 # Use trends_data
 
         near_top = False
         near_bot = False
-        
+
         if not pks.empty:
             for t_idx in pks.index[-3:]:
                 if (df.index[-1].to_pydatetime() - t_idx.to_pydatetime()).days <= 5:
@@ -137,16 +150,17 @@ if __name__ == '__main__':
                     break
 
         print(f"Price: {px:.2f}")
-        print(f"Short EMA: {last['ema_s']:.2f}  Long EMA: {last['ema_l']:.2f}")
-        print(f"RSI: {last['rsi']:.2f}")
-        print(f"MACD: {last['macd']:.2f}  Signal: {last['macd_sig']:.2f}")
-        print(f"Trend: {slope:.4f}")
+        # Use .item() to extract scalar value from Series to avoid FutureWarning
+        print(f"Short EMA: {last['ema_s'].item():.2f}   Long EMA: {last['ema_l'].item():.2f}")
+        print(f"RSI: {last['rsi'].item():.2f}")
+        print(f"MACD: {last['macd'].item():.2f}   Signal: {last['macd_sig'].item():.2f}")
+
 
         action = "Hold"
-        if px > last['ema_s'] and last['rsi'] < 80 and last['macd'] > last['macd_sig']:
+        if px > last['ema_s'].item() and last['rsi'].item() < 80 and last['macd'].item() > last['macd_sig'].item():
             if not near_top:
                 action = "Buy"
-        elif px < last['ema_l'] and last['rsi'] > 20 and last['macd'] < last['macd_sig']:
+        elif px < last['ema_l'].item() and last['rsi'].item() > 20 and last['macd'].item() < last['macd_sig'].item():
             action = "Sell" if not near_bot else "Maybe sell"
 
         print(f"Decision: {action}")
